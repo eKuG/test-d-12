@@ -1,0 +1,84 @@
+name: Matrixed OTel Distro Build (Print GoReleaser Config)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            artifact_name: linux-amd64
+          - platform: linux/arm64
+            artifact_name: linux-arm64
+          - platform: darwin/arm64
+            artifact_name: darwin-arm64
+          - platform: windows/amd64
+            artifact_name: windows-amd64
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # This will FAIL on darwin/windows today due to nfpm expecting linux binaries,
+      # but it still generates .goreleaser.yaml before failing.
+      - name: Build and Package (may fail on non-linux)
+        id: build
+        continue-on-error: true
+        uses: observiq/otel-distro-builder@v1
+        with:
+          platforms: ${{ matrix.platform }}
+          # manifest: ./manifest.yaml       # uncomment if you use a non-default path
+          # artifact_dir: ./artifacts       # uncomment if you changed artifact output dir
+
+      - name: Print generated .goreleaser.yaml
+        shell: bash
+        run: |
+          echo "=== Platform: ${{ matrix.platform }} ==="
+          echo "PWD: $(pwd)"
+          echo ""
+          if [[ -f ".goreleaser.yaml" ]]; then
+            echo "----- BEGIN .goreleaser.yaml -----"
+            cat .goreleaser.yaml
+            echo "----- END .goreleaser.yaml -----"
+          else
+            echo "ERROR: .goreleaser.yaml not found in workspace."
+            echo "Workspace files:"
+            ls -la
+            exit 1
+          fi
+
+      # Save it so you can compare across platforms in the UI
+      - name: Upload goreleaser config
+        uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-yaml-${{ matrix.artifact_name }}
+          path: .goreleaser.yaml
+          retention-days: 5
+
+      # Optional: upload whatever artifacts did get produced before the failure
+      - name: Upload build artifacts (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: distro-artifacts-${{ matrix.artifact_name }}
+          path: |
+            artifacts/*
+          if-no-files-found: ignore
+          retention-days: 5
+
+      # If you want the job to FAIL overall when builder failed (after printing/uploading),
+      # uncomment this step.
+      # - name: Fail if builder failed
+      #   if: steps.build.outcome != 'success'
+      #   run: exit 1
